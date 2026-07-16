@@ -1,0 +1,52 @@
+# DocScanner
+
+NovaVision platformu için geliştirilmiş, telefonla çekilen belge fotoğraflarını otomatik
+kırpıp taranmış kağıt görünümüne dönüştüren bir görüntü işleme paketi (component).
+
+## Executor'lar
+
+### 1. DocumentCrop — 1 input / 1 output
+
+Belgeyi fotoğraftan tespit edip kırpar veya perspektifini düzeltir.
+
+- **Input:** `inputImage` — ham telefon fotoğrafı
+- **Output:** `outputImage` — kırpılmış/düzleştirilmiş belge
+
+**`configCropType`** (dependentDropdownlist, 2 seçenek):
+
+| Seçenek | Alanlar | Açıklama |
+|---|---|---|
+| `AutoCrop` | `paddingPx` (textInput), `edgeSensitivity` (dropdownlist: Low/High) | En büyük 4 köşeli konturu (Canny + `findContours`) bulup etrafında `paddingPx` kadar boşluk bırakarak kırpar. Kontur bulunamazsa görüntüyü olduğu gibi (padding kadar kenardan kırparak) döndürür. |
+| `PerspectiveCorrect` | `cornerDetection` (dropdownlist: Auto/Manual), `outputAspect` (textInput) | 4 köşeyi bulup `getPerspectiveTransform` + `warpPerspective` ile düz bir dikdörtgene oturtur; çıktı en-boy oranı `outputAspect` ile ayarlanır (0.707 ≈ A4). Köşe bulunamazsa (`Manual` ya da tespit başarısız) orijinal görüntüyü değiştirmeden döner. |
+
+### 2. ScanEffect — 2 input / 2 output
+
+Kırpılmış belgeye "taranmış kağıt" efekti uygular ve sonucun kalitesini puanlar.
+
+- **Input:** `inputImage` — kırpılmış belge, `inputReferenceImage` (opsiyonel) — aynı
+  ışıkta çekilmiş boş/beyaz bir referans yaması, beyaz dengesi için kullanılır
+- **Output:** `outputImage` — taranmış sonuç, `outputQualityScore` — netlik/kontrast
+  temelli 0-100 arası basit bir kalite skoru
+
+**`configScanType`** (dependentDropdownlist, 2 seçenek):
+
+| Seçenek | Alanlar | Açıklama |
+|---|---|---|
+| `BlackWhiteScan` | `sharpenLevel` (textInput), `scanMode` (dropdownlist: HighContrastBW/GrayscaleSoft) | Metin belgeleri için klasik siyah-beyaz tarama görünümü. `HighContrastBW` adaptif eşikleme, `GrayscaleSoft` CLAHE ile kontrast artırılmış gri ton üretir; ardından `sharpenLevel`'e göre unsharp mask uygulanır. |
+| `ColorScan` | `brightness` (textInput), `saturationBoost` (textInput), `whiteBalance` (dropdownlist: Auto/Reference) | Renkli belge/fotoğraf tarama modu. `whiteBalance` = `Reference` ise beyaz dengesi `inputReferenceImage`'ın kanal ortalamalarından, `Auto` ise görüntünün kendisinden (gray-world) hesaplanır; ardından parlaklık ve doygunluk ayarlanır. |
+
+Her iki executor da hatalı/bozuk girdilerde (belge net değilse, kontur bulunamazsa vb.)
+istisna fırlatmak yerine orijinal görüntüyü değiştirmeden döndürerek çalışmaya devam eder.
+
+## Kullanım
+
+`apps/client.py` her iki executor'ın her seçeneği için örnek bir istek payload'ı üretir.
+Servis çalışırken (`service.py`, bu repo'nun konulacağı Image içinde) örnek bir isteği
+göndermek için:
+
+```python
+from apps.client import build_document_crop_auto_request, send
+send(build_document_crop_auto_request())
+```
+
+Test görselleri için bkz. [resources/README.md](resources/README.md).
