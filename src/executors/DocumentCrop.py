@@ -32,8 +32,10 @@ class DocumentCrop(Component):
         self.image = self.request.get_param("inputImage")
 
     @staticmethod
-    def bootstrap(config: dict) -> dict:
-        return {}
+    def bootstrap(config: dict = None) -> dict:
+        # No model weights to load - DocumentCrop is pure OpenCV. Report ready
+        # so the registry / Bootstrap loop can confirm the executor is wired up.
+        return {"status": "ready"}
 
     @staticmethod
     def _order_points(pts):

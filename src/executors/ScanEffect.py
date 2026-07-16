@@ -35,8 +35,10 @@ class ScanEffect(Component):
         self.reference_image = self.request.get_param("inputReferenceImage")
 
     @staticmethod
-    def bootstrap(config: dict) -> dict:
-        return {}
+    def bootstrap(config: dict = None) -> dict:
+        # No model weights to load - ScanEffect is pure OpenCV. Report ready
+        # so the registry / Bootstrap loop can confirm the executor is wired up.
+        return {"status": "ready"}
 
     @staticmethod
     def _unsharp_mask(image, amount):

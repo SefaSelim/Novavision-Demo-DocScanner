@@ -38,6 +38,24 @@ Kırpılmış belgeye "taranmış kağıt" efekti uygular ve sonucun kalitesini 
 Her iki executor da hatalı/bozuk girdilerde (belge net değilse, kontur bulunamazsa vb.)
 istisna fırlatmak yerine orijinal görüntüyü değiştirmeden döndürerek çalışmaya devam eder.
 
+## Servise bağlama
+
+Executor'lar `src/executors/__init__.py` içindeki `EXECUTORS` registry'sinde toplanır.
+Image'in kök `service.py`'sinde paketi tek satırla kaydedebilirsiniz:
+
+```python
+from components.DocScanner.src.executors import EXECUTORS
+executors = {"DocScanner": EXECUTORS}   # {"DocScanner": {"DocumentCrop": ..., "ScanEffect": ...}}
+```
+
+Deploy'dan önce tüm executor'ların yüklendiğini doğrulamak için (offline smoke test):
+
+```bash
+python -m components.DocScanner.src.executors
+# DocumentCrop: ready
+# ScanEffect: ready
+```
+
 ## Kullanım
 
 `apps/client.py` her iki executor'ın her seçeneği için örnek bir istek payload'ı üretir.
