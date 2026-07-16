@@ -440,5 +440,5 @@ class PackageConfigs(Configs):
 
 class PackageModel(Package):
     configs: PackageConfigs
-    type: Literal["component"] = "component"
+    type: Literal["DocScanner"] = "DocScanner"
     name: Literal["DocScanner"] = "DocScanner"

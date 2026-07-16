@@ -38,6 +38,17 @@ class DocumentCrop(Component):
         return {"status": "ready"}
 
     @staticmethod
+    def _to_uint8(image):
+        # Incoming frames may arrive as float (0-1 or 0-255); Canny and the
+        # other OpenCV ops below assume an 8-bit image, so normalise up front.
+        if image is None or image.dtype == np.uint8:
+            return image
+        image = image.astype("float32")
+        if image.max() <= 1.0:
+            image = image * 255.0
+        return np.clip(image, 0, 255).astype("uint8")
+
+    @staticmethod
     def _order_points(pts):
         rect = np.zeros((4, 2), dtype="float32")
         s = pts.sum(axis=1)
@@ -123,7 +134,7 @@ class DocumentCrop(Component):
 
     def run(self):
         img = Image.get_frame(img=self.image, redis_db=self.redis_db)
-        source = img.value
+        source = self._to_uint8(img.value)
 
         try:
             if self.crop_type == "AutoCrop":

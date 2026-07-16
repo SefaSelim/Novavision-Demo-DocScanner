@@ -41,6 +41,17 @@ class ScanEffect(Component):
         return {"status": "ready"}
 
     @staticmethod
+    def _to_uint8(image):
+        # Incoming frames may arrive as float (0-1 or 0-255); every OpenCV op
+        # below assumes an 8-bit BGR image, so normalise once up front.
+        if image is None or image.dtype == np.uint8:
+            return image
+        image = image.astype("float32")
+        if image.max() <= 1.0:
+            image = image * 255.0
+        return np.clip(image, 0, 255).astype("uint8")
+
+    @staticmethod
     def _unsharp_mask(image, amount):
         if amount is None or amount <= 0:
             return image
@@ -92,6 +103,8 @@ class ScanEffect(Component):
     @staticmethod
     def _quality_score(image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        if gray.dtype != np.uint8:
+            gray = np.clip(gray, 0, 255).astype("uint8")
         sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
         contrast = float(gray.std())
         score = min(100.0, (sharpness / 10.0) + contrast)
@@ -99,12 +112,12 @@ class ScanEffect(Component):
 
     def run(self):
         img = Image.get_frame(img=self.image, redis_db=self.redis_db)
-        source = img.value
+        source = self._to_uint8(img.value)
 
         reference_source = None
         if self.reference_image:
             reference_frame = Image.get_frame(img=self.reference_image, redis_db=self.redis_db)
-            reference_source = reference_frame.value
+            reference_source = self._to_uint8(reference_frame.value)
 
         try:
             if self.scan_type == "BlackWhiteScan":

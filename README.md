@@ -40,21 +40,23 @@ istisna fırlatmak yerine orijinal görüntüyü değiştirmeden döndürerek ç
 
 ## Servise bağlama
 
-Executor'lar `src/executors/__init__.py` içindeki `EXECUTORS` registry'sinde toplanır.
-Image'in kök `service.py`'sinde paketi tek satırla kaydedebilirsiniz:
+Image'in kök `service.py`'sinde iki executor'ı kaydedin (`{PaketAdı: {ExecutorAdı: Sınıf}}`):
 
 ```python
-from components.DocScanner.src.executors import EXECUTORS
-executors = {"DocScanner": EXECUTORS}   # {"DocScanner": {"DocumentCrop": ..., "ScanEffect": ...}}
+from components.DocScanner.src.executors.DocumentCrop import DocumentCrop
+from components.DocScanner.src.executors.ScanEffect import ScanEffect
+
+executors = {
+    "DocScanner": {
+        "DocumentCrop": DocumentCrop,
+        "ScanEffect": ScanEffect,
+    }
+}
 ```
 
-Deploy'dan önce tüm executor'ların yüklendiğini doğrulamak için (offline smoke test):
-
-```bash
-python -m components.DocScanner.src.executors
-# DocumentCrop: ready
-# ScanEffect: ready
-```
+`executors/` klasöründe yalnızca gerçek executor dosyaları (`DocumentCrop.py`, `ScanEffect.py`)
+bulunur; platform bu klasördeki her dosyayı bir executor olarak listelediği için buraya
+`__init__.py`/`__main__.py` gibi yardımcı dosyalar konmaz.
 
 ## Kullanım
 
