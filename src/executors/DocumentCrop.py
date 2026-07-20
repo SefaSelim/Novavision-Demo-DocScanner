@@ -61,64 +61,78 @@ class DocumentCrop(Component):
 
     @staticmethod
     def _quad_from_mask(mask, frame_area, candidates):
-        # Takes the largest region in a binary mask and, if it is a plausible
-        # page (big but not the entire frame), adds its 4 corners to candidates.
+        # Takes the largest external region in a binary mask and, if it is a
+        # plausible page (big but not the entire frame), extracts its 4 corners.
+        # Inner holes (text) are ignored thanks to RETR_EXTERNAL, so the page's
+        # OUTER boundary is what gets measured - never an inner table cell.
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return
         largest = max(contours, key=cv2.contourArea)
-        area = cv2.contourArea(largest)
-        # Ignore near-frame regions (>97%): those are equivalent to "no crop",
-        # so treating them as a detection would just hide a real smaller page.
-        if not (0.20 * frame_area < area < 0.97 * frame_area):
+        if cv2.contourArea(largest) < 0.20 * frame_area:
             return
+
         perimeter = cv2.arcLength(largest, True)
-        approx = cv2.approxPolyDP(largest, 0.02 * perimeter, True)
-        if len(approx) == 4:
-            candidates.append(approx.reshape(4, 2).astype("float32"))
-        else:
-            candidates.append(cv2.boxPoints(cv2.minAreaRect(largest)).astype("float32"))
+        quad = None
+        # Try progressively looser polygon approximations until we get a
+        # convex 4-gon (the page corners), even for a perspective-skewed sheet.
+        for eps in (0.02, 0.03, 0.05, 0.08):
+            approx = cv2.approxPolyDP(largest, eps * perimeter, True)
+            if len(approx) == 4 and cv2.isContourConvex(approx):
+                quad = approx.reshape(4, 2).astype("float32")
+                break
+        if quad is None:
+            quad = cv2.boxPoints(cv2.minAreaRect(largest)).astype("float32")
+
+        # Filter on the FINAL quad area: reject tiny quads and near-frame ones
+        # (>97%, which come from background texture and mean "no real page").
+        quad_area = cv2.contourArea(quad)
+        if 0.20 * frame_area < quad_area < 0.97 * frame_area:
+            candidates.append(quad)
 
     def _find_document_quad(self, image, edge_sensitivity="High"):
-        # Finds the four corners of the WHOLE document using several strategies
-        # and keeping the LARGEST plausible region, so a small inner element
-        # (a table cell) is never mistaken for the page. If nothing large enough
-        # is found the document most likely fills the frame, so we return None
-        # and let the caller use the full image.
+        # Finds the four corners of the WHOLE document. A bright page on a
+        # contrasting surface (a desk) is segmented with Otsu; a bordered form
+        # is caught by closed Canny edges. The LARGEST plausible page wins.
         height, width = image.shape[:2]
         frame_area = float(width * height)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        blurred = cv2.GaussianBlur(gray, (7, 7), 0)
 
         if edge_sensitivity == "Low":
             low_threshold, high_threshold = 20, 80
         else:
             low_threshold, high_threshold = 40, 130
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+        # Gentle kernel - just enough to close small gaps, NOT big enough to
+        # inflate the page towards the whole frame (that was the earlier bug).
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
         candidates = []
 
-        # Strategy 1 - edges merged into one blob (captures a bordered form or a
-        # table grid that reaches the page edges).
+        # Strategy 1 - Canny edges closed into the page outline (bordered forms,
+        # sharp paper edges).
         edges = cv2.Canny(blurred, low_threshold, high_threshold)
-        blob = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=3)
-        blob = cv2.dilate(blob, kernel, iterations=1)
-        self._quad_from_mask(blob, frame_area, candidates)
+        edges = cv2.dilate(edges, kernel, iterations=1)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+        self._quad_from_mask(edges, frame_area, candidates)
 
-        # Strategy 2 - Otsu foreground/background segmentation, both polarities
-        # (captures a page whose paper tone differs from its surroundings).
+        # Strategy 2 - Otsu paper/background segmentation, both polarities
+        # (bright paper on a darker desk, or vice versa).
         _, otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         for mask in (otsu, cv2.bitwise_not(otsu)):
-            closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-            self._quad_from_mask(closed, frame_area, candidates)
+            # OPEN first to erase background speckle/wood grain, then CLOSE to
+            # fill the text holes inside the page.
+            cleaned = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+            cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=2)
+            self._quad_from_mask(cleaned, frame_area, candidates)
 
         if not candidates:
             return None
 
         best = max(candidates, key=lambda q: cv2.contourArea(q.astype("float32")))
-        # Only trust a detection that is plausibly the whole page. Otherwise the
-        # document fills the frame - the caller should use the full image.
-        if cv2.contourArea(best.astype("float32")) < 0.55 * frame_area:
+        # The document here fills most of the frame; accept any clearly large
+        # page. If nothing qualifies, the caller falls back to the full image.
+        if cv2.contourArea(best.astype("float32")) < 0.40 * frame_area:
             return None
         return best
 
