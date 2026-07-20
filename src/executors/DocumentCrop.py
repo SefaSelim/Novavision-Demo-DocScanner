@@ -1,7 +1,8 @@
 """
-    Detects a document in a photo and crops/flattens it, either by a simple
-    padded bounding-box crop (AutoCrop) or by a full perspective correction
-    onto a flat rectangle (PerspectiveCorrect).
+    Detects a document's 4 corners in a photo and flattens it onto a straight
+    rectangle. AutoCrop keeps the page's natural proportions (plus an optional
+    padding margin); PerspectiveCorrect additionally fits the result to a target
+    aspect ratio by white padding (never stretching).
 """
 
 import os
@@ -137,10 +138,11 @@ class DocumentCrop(Component):
         return best
 
     @staticmethod
-    def _warp_to_rect(image, rect, output_aspect=None):
-        # Deskews the four ordered corners onto a flat rectangle. When
-        # output_aspect is None the document's own measured proportions are
-        # kept; otherwise width/height is forced to the given aspect.
+    def _warp_to_rect(image, rect):
+        # Deskews the four ordered corners onto a flat rectangle using the
+        # document's OWN measured proportions (width from the top/bottom edges,
+        # height from the side edges). This removes perspective without ever
+        # stretching the page, so the result keeps its true shape.
         (tl, tr, br, bl) = rect
         width_top = np.linalg.norm(tr - tl)
         width_bottom = np.linalg.norm(br - bl)
@@ -148,11 +150,7 @@ class DocumentCrop(Component):
         height_right = np.linalg.norm(br - tr)
 
         max_width = max(int(max(width_top, width_bottom)), 1)
-        if output_aspect:
-            # outputAspect is width/height (0.707 ~= A4 portrait)
-            max_height = max(int(max_width / output_aspect), 1)
-        else:
-            max_height = max(int(max(height_left, height_right)), 1)
+        max_height = max(int(max(height_left, height_right)), 1)
 
         destination = np.array([
             [0, 0],
@@ -163,6 +161,26 @@ class DocumentCrop(Component):
 
         matrix = cv2.getPerspectiveTransform(rect, destination)
         return cv2.warpPerspective(image, matrix, (max_width, max_height))
+
+    @staticmethod
+    def _pad_to_aspect(image, target_aspect):
+        # Pads with white (never stretches) until width/height == target_aspect,
+        # so outputAspect is honoured without distorting the deskewed page.
+        height, width = image.shape[:2]
+        if height == 0 or width == 0:
+            return image
+        current = width / float(height)
+        if abs(current - target_aspect) < 0.01:
+            return image
+        if current < target_aspect:
+            # Too narrow - pad left/right.
+            extra = max(int(round(height * target_aspect)) - width, 0)
+            left, right = extra // 2, extra - extra // 2
+            return cv2.copyMakeBorder(image, 0, 0, left, right, cv2.BORDER_CONSTANT, value=(255, 255, 255))
+        # Too wide - pad top/bottom.
+        extra = max(int(round(width / target_aspect)) - height, 0)
+        top, bottom = extra // 2, extra - extra // 2
+        return cv2.copyMakeBorder(image, top, bottom, 0, 0, cv2.BORDER_CONSTANT, value=(255, 255, 255))
 
     def _auto_crop(self, image, padding_px, edge_sensitivity):
         height, width = image.shape[:2]
@@ -179,8 +197,8 @@ class DocumentCrop(Component):
         print(f"[DocumentCrop] AutoCrop document quad covers {coverage * 100:.1f}% of the frame")
 
         # 4-point crop: deskew the detected corners onto a straight rectangle,
-        # keeping the document's own proportions (no aspect forcing here).
-        result = self._warp_to_rect(image, rect, output_aspect=None)
+        # keeping the document's own proportions.
+        result = self._warp_to_rect(image, rect)
 
         # paddingPx adds a uniform white margin around the cropped page.
         if padding_px and padding_px > 0:
@@ -198,9 +216,19 @@ class DocumentCrop(Component):
         if quad is None:
             # Fallback: Manual mode (no corners supplied) or Auto detection
             # failed - return the image untouched rather than raising.
+            print("[DocumentCrop] PerspectiveCorrect: no document quad found - returning full frame")
             return image
 
-        return self._warp_to_rect(image, self._order_points(quad), output_aspect=output_aspect)
+        rect = self._order_points(quad)
+        coverage = cv2.contourArea(rect.astype("float32")) / float(image.shape[0] * image.shape[1])
+        print(f"[DocumentCrop] PerspectiveCorrect document quad covers {coverage * 100:.1f}% of the frame")
+
+        # Deskew to the document's true proportions (no stretching)...
+        warped = self._warp_to_rect(image, rect)
+        # ...then honour outputAspect by padding only (keeps content undistorted).
+        if output_aspect and output_aspect > 0:
+            warped = self._pad_to_aspect(warped, output_aspect)
+        return warped
 
     def run(self):
         img = Image.get_frame(img=self.image, redis_db=self.redis_db)
