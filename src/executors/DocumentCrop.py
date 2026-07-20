@@ -60,30 +60,67 @@ class DocumentCrop(Component):
         return rect
 
     @staticmethod
-    def _find_document_contour(image, edge_sensitivity):
+    def _quad_from_mask(mask, frame_area, candidates):
+        # Takes the largest region in a binary mask and, if it is a plausible
+        # page (big but not the entire frame), adds its 4 corners to candidates.
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return
+        largest = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest)
+        # Ignore near-frame regions (>97%): those are equivalent to "no crop",
+        # so treating them as a detection would just hide a real smaller page.
+        if not (0.20 * frame_area < area < 0.97 * frame_area):
+            return
+        perimeter = cv2.arcLength(largest, True)
+        approx = cv2.approxPolyDP(largest, 0.02 * perimeter, True)
+        if len(approx) == 4:
+            candidates.append(approx.reshape(4, 2).astype("float32"))
+        else:
+            candidates.append(cv2.boxPoints(cv2.minAreaRect(largest)).astype("float32"))
+
+    def _find_document_quad(self, image, edge_sensitivity="High"):
+        # Finds the four corners of the WHOLE document using several strategies
+        # and keeping the LARGEST plausible region, so a small inner element
+        # (a table cell) is never mistaken for the page. If nothing large enough
+        # is found the document most likely fills the frame, so we return None
+        # and let the caller use the full image.
+        height, width = image.shape[:2]
+        frame_area = float(width * height)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
         if edge_sensitivity == "Low":
-            low_threshold, high_threshold = 30, 100
+            low_threshold, high_threshold = 20, 80
         else:
-            low_threshold, high_threshold = 75, 200
+            low_threshold, high_threshold = 40, 130
 
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+        candidates = []
+
+        # Strategy 1 - edges merged into one blob (captures a bordered form or a
+        # table grid that reaches the page edges).
         edges = cv2.Canny(blurred, low_threshold, high_threshold)
-        edges = cv2.dilate(edges, None, iterations=1)
+        blob = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=3)
+        blob = cv2.dilate(blob, kernel, iterations=1)
+        self._quad_from_mask(blob, frame_area, candidates)
 
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
+        # Strategy 2 - Otsu foreground/background segmentation, both polarities
+        # (captures a page whose paper tone differs from its surroundings).
+        _, otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        for mask in (otsu, cv2.bitwise_not(otsu)):
+            closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+            self._quad_from_mask(closed, frame_area, candidates)
+
+        if not candidates:
             return None
 
-        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
-        for contour in contours:
-            perimeter = cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
-            if len(approx) == 4:
-                return approx.reshape(4, 2).astype("float32")
-
-        return None
+        best = max(candidates, key=lambda q: cv2.contourArea(q.astype("float32")))
+        # Only trust a detection that is plausibly the whole page. Otherwise the
+        # document fills the frame - the caller should use the full image.
+        if cv2.contourArea(best.astype("float32")) < 0.55 * frame_area:
+            return None
+        return best
 
     @staticmethod
     def _warp_to_rect(image, rect, output_aspect=None):
@@ -115,37 +152,41 @@ class DocumentCrop(Component):
 
     def _auto_crop(self, image, padding_px, edge_sensitivity):
         height, width = image.shape[:2]
-        contour = self._find_document_contour(image, edge_sensitivity)
+        quad = self._find_document_quad(image, edge_sensitivity)
 
-        if contour is None:
-            # Fallback: no clear document contour found, just shave the
-            # requested padding off every side instead of failing.
-            x1 = min(padding_px, max(width // 2 - 1, 0))
-            y1 = min(padding_px, max(height // 2 - 1, 0))
-            return image[y1:height - y1, x1:width - x1]
+        if quad is None:
+            # Could not find the document's 4 corners - return the whole frame
+            # untouched rather than cropping to a wrong sub-region.
+            print("[DocumentCrop] no document quad found - returning full frame")
+            return image
 
-        # Deskew onto the document's own proportions so a rotated/tilted page
-        # comes out straight (a plain bounding box would keep the skew), then
-        # add a uniform padding border so nothing is clipped at the edges.
-        warped = self._warp_to_rect(image, self._order_points(contour), output_aspect=None)
+        rect = self._order_points(quad)
+        coverage = cv2.contourArea(rect.astype("float32")) / float(width * height)
+        print(f"[DocumentCrop] AutoCrop document quad covers {coverage * 100:.1f}% of the frame")
+
+        # 4-point crop: deskew the detected corners onto a straight rectangle,
+        # keeping the document's own proportions (no aspect forcing here).
+        result = self._warp_to_rect(image, rect, output_aspect=None)
+
+        # paddingPx adds a uniform white margin around the cropped page.
         if padding_px and padding_px > 0:
-            warped = cv2.copyMakeBorder(
-                warped, padding_px, padding_px, padding_px, padding_px,
+            result = cv2.copyMakeBorder(
+                result, padding_px, padding_px, padding_px, padding_px,
                 cv2.BORDER_CONSTANT, value=(255, 255, 255)
             )
-        return warped
+        return result
 
     def _perspective_correct(self, image, corner_detection, output_aspect):
-        contour = None
+        quad = None
         if corner_detection == "Auto":
-            contour = self._find_document_contour(image, "High")
+            quad = self._find_document_quad(image, "High")
 
-        if contour is None:
+        if quad is None:
             # Fallback: Manual mode (no corners supplied) or Auto detection
             # failed - return the image untouched rather than raising.
             return image
 
-        return self._warp_to_rect(image, self._order_points(contour), output_aspect=output_aspect)
+        return self._warp_to_rect(image, self._order_points(quad), output_aspect=output_aspect)
 
     def run(self):
         img = Image.get_frame(img=self.image, redis_db=self.redis_db)

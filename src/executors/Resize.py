@@ -100,6 +100,7 @@ class Resize(Component):
         img = Image.get_frame(img=self.image, redis_db=self.redis_db)
         source = self._to_uint8(img.value)
 
+        in_h, in_w = source.shape[:2]
         try:
             if self.resize_mode == "ExactSize":
                 result = self._exact_size(
@@ -112,6 +113,14 @@ class Resize(Component):
             # Never let a bad photo crash the executor - return the source
             # image untouched as the safest possible fallback.
             result = source
+
+        out_h, out_w = result.shape[:2]
+        in_aspect = round(in_w / float(in_h), 3) if in_h else 0
+        out_aspect = round(out_w / float(out_h), 3) if out_h else 0
+        print(
+            f"[Resize] {self.resize_mode or 'FitLongEdge'}: "
+            f"{in_w}x{in_h} (aspect {in_aspect}) -> {out_w}x{out_h} (aspect {out_aspect})"
+        )
 
         img.value = result
         self.image = Image.set_frame(img=img, package_uID=self.uID, redis_db=self.redis_db)
