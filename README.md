@@ -1,7 +1,8 @@
 # DocScanner
 
-NovaVision platformu için geliştirilmiş, telefonla çekilen belge fotoğraflarını otomatik
-kırpıp taranmış kağıt görünümüne dönüştüren bir görüntü işleme paketi (component).
+NovaVision platformu için geliştirilmiş, telefonla çekilen belge fotoğraflarını
+kırpıp taranmış kağıt görünümüne dönüştüren ve yeniden boyutlandıran bir görüntü
+işleme paketi (component). Üç executor içerir: DocumentCrop, ScanEffect, Resize.
 
 ## Executor'lar
 
@@ -35,28 +36,44 @@ Kırpılmış belgeye "taranmış kağıt" efekti uygular ve sonucun kalitesini 
 | `BlackWhiteScan` | `sharpenLevel` (textInput), `scanMode` (dropdownlist: HighContrastBW/GrayscaleSoft) | Metin belgeleri için klasik siyah-beyaz tarama görünümü. `HighContrastBW` adaptif eşikleme, `GrayscaleSoft` CLAHE ile kontrast artırılmış gri ton üretir; ardından `sharpenLevel`'e göre unsharp mask uygulanır. |
 | `ColorScan` | `brightness` (textInput), `saturationBoost` (textInput), `whiteBalance` (dropdownlist: Auto/Reference) | Renkli belge/fotoğraf tarama modu. `whiteBalance` = `Reference` ise beyaz dengesi `inputReferenceImage`'ın kanal ortalamalarından, `Auto` ise görüntünün kendisinden (gray-world) hesaplanır; ardından parlaklık ve doygunluk ayarlanır. |
 
-Her iki executor da hatalı/bozuk girdilerde (belge net değilse, kontur bulunamazsa vb.)
-istisna fırlatmak yerine orijinal görüntüyü değiştirmeden döndürerek çalışmaya devam eder.
+### 3. Resize — 1 input / 1 output
+
+Görüntüyü isteğe bağlı olarak yeniden boyutlandırır (otomatik değil — kullanıcı seçer).
+
+- **Input:** `inputImage` — herhangi bir görüntü
+- **Output:** `outputImage` — yeniden boyutlandırılmış görüntü
+
+**`configResizeMode`** (dependentDropdownlist, 2 seçenek):
+
+| Seçenek | Alanlar | Açıklama |
+|---|---|---|
+| `FitLongEdge` | `maxEdge` (textInput), `interpolation` (dropdownlist: Area/Cubic) | En uzun kenarı `maxEdge` piksele ölçekler, en-boy oranını korur. `Area` küçültme, `Cubic` büyütme için idealdir. |
+| `ExactSize` | `targetWidth` (textInput), `targetHeight` (textInput), `fitMode` (dropdownlist: Stretch/Pad) | Tam `targetWidth × targetHeight` boyutuna getirir. `Stretch` oranı yok sayıp kutuyu doldurur; `Pad` oranı koruyup kalanı beyazla doldurur. |
+
+Üç executor da hatalı/bozuk girdilerde istisna fırlatmak yerine orijinal görüntüyü
+değiştirmeden döndürerek çalışmaya devam eder.
 
 ## Servise bağlama
 
-Image'in kök `service.py`'sinde iki executor'ı kaydedin (`{PaketAdı: {ExecutorAdı: Sınıf}}`):
+Image'in kök `service.py`'sinde üç executor'ı kaydedin (`{PaketAdı: {ExecutorAdı: Sınıf}}`):
 
 ```python
 from components.DocScanner.src.executors.DocumentCrop import DocumentCrop
 from components.DocScanner.src.executors.ScanEffect import ScanEffect
+from components.DocScanner.src.executors.Resize import Resize
 
 executors = {
     "DocScanner": {
         "DocumentCrop": DocumentCrop,
         "ScanEffect": ScanEffect,
+        "Resize": Resize,
     }
 }
 ```
 
-`executors/` klasöründe yalnızca gerçek executor dosyaları (`DocumentCrop.py`, `ScanEffect.py`)
-bulunur; platform bu klasördeki her dosyayı bir executor olarak listelediği için buraya
-`__init__.py`/`__main__.py` gibi yardımcı dosyalar konmaz.
+`executors/` klasöründe yalnızca gerçek executor dosyaları (`DocumentCrop.py`, `ScanEffect.py`,
+`Resize.py`) bulunur; platform bu klasördeki her dosyayı bir executor olarak listelediği için
+buraya `__init__.py`/`__main__.py` gibi yardımcı dosyalar konmaz.
 
 ## Kullanım
 

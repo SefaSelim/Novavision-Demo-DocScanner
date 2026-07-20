@@ -53,6 +53,16 @@ def _scan(scan_type_value, inputs):
     })
 
 
+def _resize(resize_mode_value):
+    return _wrap("Resize", {
+        "inputs": {"inputImage": {"name": "inputImage", "value": _image(), "type": "object"}},
+        "configs": {"configResizeMode": {
+            "name": "configResizeMode", "type": "object",
+            "field": "dependentDropdownlist", "value": resize_mode_value,
+        }},
+    })
+
+
 def test_auto_crop():
     payload = _crop({
         "name": "AutoCrop", "value": "AutoCrop", "type": "string", "field": "option",
@@ -101,3 +111,26 @@ def test_color_scan_with_reference():
     }, inputs)
     model = PackageModel(**payload)
     assert model.configs.executor.value.name == "ScanEffect"
+
+
+def test_resize_fit_long_edge():
+    payload = _resize({
+        "name": "FitLongEdge", "value": "FitLongEdge", "type": "string", "field": "option",
+        "maxEdge": {"name": "MaxEdge", "value": 1600, "type": "number", "field": "textInput"},
+        "interpolation": {"name": "Interpolation", "type": "object", "field": "dropdownlist",
+                         "value": {"name": "Area", "value": "Area", "type": "string", "field": "option"}},
+    })
+    model = PackageModel(**payload)
+    assert model.configs.executor.value.name == "Resize"
+
+
+def test_resize_exact_size():
+    payload = _resize({
+        "name": "ExactSize", "value": "ExactSize", "type": "string", "field": "option",
+        "targetWidth": {"name": "TargetWidth", "value": 1240, "type": "number", "field": "textInput"},
+        "targetHeight": {"name": "TargetHeight", "value": 1754, "type": "number", "field": "textInput"},
+        "fitMode": {"name": "FitMode", "type": "object", "field": "dropdownlist",
+                   "value": {"name": "Pad", "value": "Pad", "type": "string", "field": "option"}},
+    })
+    model = PackageModel(**payload)
+    assert model.configs.executor.value.name == "Resize"

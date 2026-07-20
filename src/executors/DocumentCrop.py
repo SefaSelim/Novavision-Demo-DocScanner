@@ -113,19 +113,6 @@ class DocumentCrop(Component):
         matrix = cv2.getPerspectiveTransform(rect, destination)
         return cv2.warpPerspective(image, matrix, (max_width, max_height))
 
-    @staticmethod
-    def _resize_max_edge(image, max_edge=1600):
-        # Normalises the final output: if the longest edge exceeds max_edge,
-        # scale the image down (keeping aspect ratio) so huge phone photos come
-        # out at a consistent, manageable size. Never upscales (avoids blur).
-        height, width = image.shape[:2]
-        longest = max(height, width)
-        if longest <= max_edge or longest == 0:
-            return image
-        scale = max_edge / float(longest)
-        new_size = (max(int(round(width * scale)), 1), max(int(round(height * scale)), 1))
-        return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
-
     def _auto_crop(self, image, padding_px, edge_sensitivity):
         height, width = image.shape[:2]
         contour = self._find_document_contour(image, edge_sensitivity)
@@ -173,10 +160,6 @@ class DocumentCrop(Component):
             # Never let a bad photo crash the executor - return the source
             # image untouched as the safest possible fallback.
             result = source
-
-        # Normalise the output size so the final document photo is consistent
-        # regardless of the incoming camera resolution.
-        result = self._resize_max_edge(result, 1600)
 
         img.value = result
         self.image = Image.set_frame(img=img, package_uID=self.uID, redis_db=self.redis_db)

@@ -230,6 +230,100 @@ def build_scan_effect_color_request(
     }
 
 
+def build_resize_fit_request(image_path="resources/sample_document.jpg"):
+    return {
+        "name": "DocScanner",
+        "type": "component",
+        "executor": {
+            "name": "ConfigExecutor",
+            "type": "executor",
+            "field": "dependentDropdownlist",
+            "value": {
+                "name": "Resize",
+                "type": "object",
+                "field": "option",
+                "value": {
+                    "inputs": {
+                        "inputImage": _image_input("inputImage", image_path),
+                    },
+                    "configs": {
+                        "configResizeMode": {
+                            "name": "configResizeMode",
+                            "type": "object",
+                            "field": "dependentDropdownlist",
+                            "value": {
+                                "name": "FitLongEdge",
+                                "value": "FitLongEdge",
+                                "type": "string",
+                                "field": "option",
+                                "maxEdge": {
+                                    "name": "MaxEdge", "value": 1600,
+                                    "type": "number", "field": "textInput",
+                                },
+                                "interpolation": {
+                                    "name": "Interpolation",
+                                    "type": "object",
+                                    "field": "dropdownlist",
+                                    "value": {"name": "Area", "value": "Area", "type": "string", "field": "option"},
+                                },
+                            },
+                        }
+                    },
+                },
+            },
+        },
+    }
+
+
+def build_resize_exact_request(image_path="resources/sample_document.jpg"):
+    return {
+        "name": "DocScanner",
+        "type": "component",
+        "executor": {
+            "name": "ConfigExecutor",
+            "type": "executor",
+            "field": "dependentDropdownlist",
+            "value": {
+                "name": "Resize",
+                "type": "object",
+                "field": "option",
+                "value": {
+                    "inputs": {
+                        "inputImage": _image_input("inputImage", image_path),
+                    },
+                    "configs": {
+                        "configResizeMode": {
+                            "name": "configResizeMode",
+                            "type": "object",
+                            "field": "dependentDropdownlist",
+                            "value": {
+                                "name": "ExactSize",
+                                "value": "ExactSize",
+                                "type": "string",
+                                "field": "option",
+                                "targetWidth": {
+                                    "name": "TargetWidth", "value": 1240,
+                                    "type": "number", "field": "textInput",
+                                },
+                                "targetHeight": {
+                                    "name": "TargetHeight", "value": 1754,
+                                    "type": "number", "field": "textInput",
+                                },
+                                "fitMode": {
+                                    "name": "FitMode",
+                                    "type": "object",
+                                    "field": "dropdownlist",
+                                    "value": {"name": "Pad", "value": "Pad", "type": "string", "field": "option"},
+                                },
+                            },
+                        }
+                    },
+                },
+            },
+        },
+    }
+
+
 def send(request_payload):
     response = requests.post(ENDPOINT_URL, json=request_payload)
     response.raise_for_status()

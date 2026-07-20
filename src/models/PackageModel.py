@@ -421,12 +421,193 @@ class ScanEffectExecutor(Config):
 
 
 # ---------------------------------------------------------------------------
+# Executor 3 - Resize : 1 input / 1 output
+# ---------------------------------------------------------------------------
+
+# --- FitLongEdge option ---
+class MaxEdge(Config):
+    name: Literal["MaxEdge"] = "MaxEdge"
+    value: int = Field(ge=64, le=8000, default=1600)
+    type: Literal["number"] = "number"
+    field: Literal["textInput"] = "textInput"
+    placeHolder: Literal["[64, 8000]"] = "[64, 8000]"
+
+    class Config:
+        title = "Max Edge (px)"
+
+
+class InterpolationArea(Config):
+    name: Literal["Area"] = "Area"
+    value: Literal["Area"] = "Area"
+    type: Literal["string"] = "string"
+    field: Literal["option"] = "option"
+
+    class Config:
+        title = "Area (best for shrinking)"
+
+
+class InterpolationCubic(Config):
+    name: Literal["Cubic"] = "Cubic"
+    value: Literal["Cubic"] = "Cubic"
+    type: Literal["string"] = "string"
+    field: Literal["option"] = "option"
+
+    class Config:
+        title = "Cubic (best for enlarging)"
+
+
+class Interpolation(Config):
+    name: Literal["Interpolation"] = "Interpolation"
+    value: Union[InterpolationArea, InterpolationCubic]
+    type: Literal["object"] = "object"
+    field: Literal["dropdownlist"] = "dropdownlist"
+
+    class Config:
+        title = "Interpolation"
+
+
+class FitLongEdge(Config):
+    """
+        Scales the image so its longest edge equals maxEdge, keeping aspect.
+    """
+    name: Literal["FitLongEdge"] = "FitLongEdge"
+    value: Literal["FitLongEdge"] = "FitLongEdge"
+    type: Literal["string"] = "string"
+    field: Literal["option"] = "option"
+    maxEdge: MaxEdge
+    interpolation: Interpolation
+
+    class Config:
+        title = "Fit Long Edge"
+
+
+# --- ExactSize option ---
+class TargetWidth(Config):
+    name: Literal["TargetWidth"] = "TargetWidth"
+    value: int = Field(ge=16, le=8000, default=1240)
+    type: Literal["number"] = "number"
+    field: Literal["textInput"] = "textInput"
+    placeHolder: Literal["[16, 8000]"] = "[16, 8000]"
+
+    class Config:
+        title = "Target Width (px)"
+
+
+class TargetHeight(Config):
+    name: Literal["TargetHeight"] = "TargetHeight"
+    value: int = Field(ge=16, le=8000, default=1754)
+    type: Literal["number"] = "number"
+    field: Literal["textInput"] = "textInput"
+    placeHolder: Literal["[16, 8000]"] = "[16, 8000]"
+
+    class Config:
+        title = "Target Height (px)"
+
+
+class FitStretch(Config):
+    name: Literal["Stretch"] = "Stretch"
+    value: Literal["Stretch"] = "Stretch"
+    type: Literal["string"] = "string"
+    field: Literal["option"] = "option"
+
+    class Config:
+        title = "Stretch to fit"
+
+
+class FitPad(Config):
+    name: Literal["Pad"] = "Pad"
+    value: Literal["Pad"] = "Pad"
+    type: Literal["string"] = "string"
+    field: Literal["option"] = "option"
+
+    class Config:
+        title = "Keep aspect + pad"
+
+
+class FitMode(Config):
+    name: Literal["FitMode"] = "FitMode"
+    value: Union[FitStretch, FitPad]
+    type: Literal["object"] = "object"
+    field: Literal["dropdownlist"] = "dropdownlist"
+
+    class Config:
+        title = "Fit Mode"
+
+
+class ExactSize(Config):
+    """
+        Resizes to an exact width x height, either stretched or aspect-padded.
+    """
+    name: Literal["ExactSize"] = "ExactSize"
+    value: Literal["ExactSize"] = "ExactSize"
+    type: Literal["string"] = "string"
+    field: Literal["option"] = "option"
+    targetWidth: TargetWidth
+    targetHeight: TargetHeight
+    fitMode: FitMode
+
+    class Config:
+        title = "Exact Size"
+
+
+class ConfigResizeMode(Config):
+    name: Literal["configResizeMode"] = "configResizeMode"
+    value: Union[FitLongEdge, ExactSize]
+    type: Literal["object"] = "object"
+    field: Literal["dependentDropdownlist"] = "dependentDropdownlist"
+
+    class Config:
+        title = "Resize Mode"
+
+
+class ResizeInputs(Inputs):
+    inputImage: InputImage
+
+
+class ResizeConfigs(Configs):
+    configResizeMode: ConfigResizeMode
+
+
+class ResizeOutputs(Outputs):
+    outputImage: OutputImage
+
+
+class ResizeRequest(Request):
+    inputs: Optional[ResizeInputs]
+    configs: ResizeConfigs
+
+    class Config:
+        json_schema_extra = {
+            "target": "configs"
+        }
+
+
+class ResizeResponse(Response):
+    outputs: ResizeOutputs
+
+
+class ResizeExecutor(Config):
+    name: Literal["Resize"] = "Resize"
+    value: Union[ResizeRequest, ResizeResponse]
+    type: Literal["object"] = "object"
+    field: Literal["option"] = "option"
+
+    class Config:
+        title = "Resize"
+        json_schema_extra = {
+            "target": {
+                "value": 0
+            }
+        }
+
+
+# ---------------------------------------------------------------------------
 # Package level
 # ---------------------------------------------------------------------------
 
 class ConfigExecutor(Config):
     name: Literal["ConfigExecutor"] = "ConfigExecutor"
-    value: Union[DocumentCropExecutor, ScanEffectExecutor]
+    value: Union[DocumentCropExecutor, ScanEffectExecutor, ResizeExecutor]
     type: Literal["executor"] = "executor"
     field: Literal["dependentDropdownlist"] = "dependentDropdownlist"
 
