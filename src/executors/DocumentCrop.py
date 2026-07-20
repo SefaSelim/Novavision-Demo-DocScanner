@@ -73,17 +73,20 @@ class DocumentCrop(Component):
         if cv2.contourArea(largest) < 0.20 * frame_area:
             return
 
-        perimeter = cv2.arcLength(largest, True)
+        # Work on the CONVEX HULL so the corners sit on the page's outer
+        # boundary. Approximating the raw contour can round a corner inward and
+        # clip it (the top-left-clipping bug); the hull's corners never cut in.
+        hull = cv2.convexHull(largest)
+        perimeter = cv2.arcLength(hull, True)
         quad = None
-        # Try progressively looser polygon approximations until we get a
-        # convex 4-gon (the page corners), even for a perspective-skewed sheet.
-        for eps in (0.02, 0.03, 0.05, 0.08):
-            approx = cv2.approxPolyDP(largest, eps * perimeter, True)
+        # Modest epsilons only - a loose approximation would shave the corners.
+        for eps in (0.02, 0.03, 0.04, 0.05):
+            approx = cv2.approxPolyDP(hull, eps * perimeter, True)
             if len(approx) == 4 and cv2.isContourConvex(approx):
                 quad = approx.reshape(4, 2).astype("float32")
                 break
         if quad is None:
-            quad = cv2.boxPoints(cv2.minAreaRect(largest)).astype("float32")
+            quad = cv2.boxPoints(cv2.minAreaRect(hull)).astype("float32")
 
         # Filter on the FINAL quad area: reject tiny quads and near-frame ones
         # (>97%, which come from background texture and mean "no real page").
@@ -138,6 +141,14 @@ class DocumentCrop(Component):
         return best
 
     @staticmethod
+    def _expand_quad(rect, ratio=0.02):
+        # Push each corner outward from the quad's centre by `ratio` so a
+        # marginally inset detection still includes the document's true edges
+        # and corners (safety margin against clipping, e.g. the top-left strip).
+        center = rect.mean(axis=0)
+        return ((rect - center) * (1.0 + ratio) + center).astype("float32")
+
+    @staticmethod
     def _warp_to_rect(image, rect):
         # Deskews the four ordered corners onto a flat rectangle using the
         # document's OWN measured proportions (width from the top/bottom edges,
@@ -160,7 +171,11 @@ class DocumentCrop(Component):
         ], dtype="float32")
 
         matrix = cv2.getPerspectiveTransform(rect, destination)
-        return cv2.warpPerspective(image, matrix, (max_width, max_height))
+        # BORDER_REPLICATE so the small outward expansion never introduces harsh
+        # black edges - it extends the border pixels instead.
+        return cv2.warpPerspective(
+            image, matrix, (max_width, max_height), borderMode=cv2.BORDER_REPLICATE
+        )
 
     @staticmethod
     def _pad_to_aspect(image, target_aspect):
@@ -196,6 +211,9 @@ class DocumentCrop(Component):
         coverage = cv2.contourArea(rect.astype("float32")) / float(width * height)
         print(f"[DocumentCrop] AutoCrop document quad covers {coverage * 100:.1f}% of the frame")
 
+        # Small outward margin so no document edge/corner is clipped.
+        rect = self._expand_quad(rect, 0.03)
+
         # 4-point crop: deskew the detected corners onto a straight rectangle,
         # keeping the document's own proportions.
         result = self._warp_to_rect(image, rect)
@@ -222,6 +240,9 @@ class DocumentCrop(Component):
         rect = self._order_points(quad)
         coverage = cv2.contourArea(rect.astype("float32")) / float(image.shape[0] * image.shape[1])
         print(f"[DocumentCrop] PerspectiveCorrect document quad covers {coverage * 100:.1f}% of the frame")
+
+        # Small outward margin so no document edge/corner is clipped.
+        rect = self._expand_quad(rect, 0.03)
 
         # Deskew to the document's true proportions (no stretching)...
         warped = self._warp_to_rect(image, rect)
