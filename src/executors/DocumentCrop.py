@@ -85,6 +85,47 @@ class DocumentCrop(Component):
 
         return None
 
+    @staticmethod
+    def _warp_to_rect(image, rect, output_aspect=None):
+        # Deskews the four ordered corners onto a flat rectangle. When
+        # output_aspect is None the document's own measured proportions are
+        # kept; otherwise width/height is forced to the given aspect.
+        (tl, tr, br, bl) = rect
+        width_top = np.linalg.norm(tr - tl)
+        width_bottom = np.linalg.norm(br - bl)
+        height_left = np.linalg.norm(bl - tl)
+        height_right = np.linalg.norm(br - tr)
+
+        max_width = max(int(max(width_top, width_bottom)), 1)
+        if output_aspect:
+            # outputAspect is width/height (0.707 ~= A4 portrait)
+            max_height = max(int(max_width / output_aspect), 1)
+        else:
+            max_height = max(int(max(height_left, height_right)), 1)
+
+        destination = np.array([
+            [0, 0],
+            [max_width - 1, 0],
+            [max_width - 1, max_height - 1],
+            [0, max_height - 1]
+        ], dtype="float32")
+
+        matrix = cv2.getPerspectiveTransform(rect, destination)
+        return cv2.warpPerspective(image, matrix, (max_width, max_height))
+
+    @staticmethod
+    def _resize_max_edge(image, max_edge=1600):
+        # Normalises the final output: if the longest edge exceeds max_edge,
+        # scale the image down (keeping aspect ratio) so huge phone photos come
+        # out at a consistent, manageable size. Never upscales (avoids blur).
+        height, width = image.shape[:2]
+        longest = max(height, width)
+        if longest <= max_edge or longest == 0:
+            return image
+        scale = max_edge / float(longest)
+        new_size = (max(int(round(width * scale)), 1), max(int(round(height * scale)), 1))
+        return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+
     def _auto_crop(self, image, padding_px, edge_sensitivity):
         height, width = image.shape[:2]
         contour = self._find_document_contour(image, edge_sensitivity)
@@ -96,12 +137,16 @@ class DocumentCrop(Component):
             y1 = min(padding_px, max(height // 2 - 1, 0))
             return image[y1:height - y1, x1:width - x1]
 
-        x, y, w, h = cv2.boundingRect(contour.astype("int32"))
-        x1 = max(0, x - padding_px)
-        y1 = max(0, y - padding_px)
-        x2 = min(width, x + w + padding_px)
-        y2 = min(height, y + h + padding_px)
-        return image[y1:y2, x1:x2]
+        # Deskew onto the document's own proportions so a rotated/tilted page
+        # comes out straight (a plain bounding box would keep the skew), then
+        # add a uniform padding border so nothing is clipped at the edges.
+        warped = self._warp_to_rect(image, self._order_points(contour), output_aspect=None)
+        if padding_px and padding_px > 0:
+            warped = cv2.copyMakeBorder(
+                warped, padding_px, padding_px, padding_px, padding_px,
+                cv2.BORDER_CONSTANT, value=(255, 255, 255)
+            )
+        return warped
 
     def _perspective_correct(self, image, corner_detection, output_aspect):
         contour = None
@@ -113,24 +158,7 @@ class DocumentCrop(Component):
             # failed - return the image untouched rather than raising.
             return image
 
-        rect = self._order_points(contour)
-        (tl, tr, br, bl) = rect
-
-        width_top = np.linalg.norm(tr - tl)
-        width_bottom = np.linalg.norm(br - bl)
-        max_width = max(int(max(width_top, width_bottom)), 1)
-        # outputAspect is width/height (0.707 ~= A4 portrait), so height = width / aspect
-        max_height = max(int(max_width / output_aspect), 1)
-
-        destination = np.array([
-            [0, 0],
-            [max_width - 1, 0],
-            [max_width - 1, max_height - 1],
-            [0, max_height - 1]
-        ], dtype="float32")
-
-        matrix = cv2.getPerspectiveTransform(rect, destination)
-        return cv2.warpPerspective(image, matrix, (max_width, max_height))
+        return self._warp_to_rect(image, self._order_points(contour), output_aspect=output_aspect)
 
     def run(self):
         img = Image.get_frame(img=self.image, redis_db=self.redis_db)
@@ -145,6 +173,10 @@ class DocumentCrop(Component):
             # Never let a bad photo crash the executor - return the source
             # image untouched as the safest possible fallback.
             result = source
+
+        # Normalise the output size so the final document photo is consistent
+        # regardless of the incoming camera resolution.
+        result = self._resize_max_edge(result, 1600)
 
         img.value = result
         self.image = Image.set_frame(img=img, package_uID=self.uID, redis_db=self.redis_db)
